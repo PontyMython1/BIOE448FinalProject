@@ -1,32 +1,30 @@
 #include <Wire.h>  // Necessary for I2C communication
 #include <LiquidCrystal.h>
 #include <ArduinoBLE.h>
-BLEService newService("180A");
 
+//Initialize Bluetooth Interface and Data Transfer
+BLEService newService("180A");
 BLEByteCharacteristic readChar("34aaae89-580a-46a3-b1d8-bcd82222bd56", BLERead | BLENotify);
 BLEByteCharacteristic writeChar("6fb9899b-169f-4313-bd0a-7f3c25fb7516", BLEWrite);
 
+
+//Initialize Variables
 int accel = 0x53;  // I2C address for this sensor (from data sheet)
 float x, y, z, acc, weight,height,goal,calsperstep,stridelength;
 const int WindowTime = 1;  //Window time in seconds
 float LastSwitch,distancetraveled = 0;
-bool stepchange,calsactive,distactive,goalactive, downstroke,weightreceived,heightreceived,goalreceived = false;
-bool BluetoothRequest,GoalCelebrated = false;
+int FirstZeroIndex,stepcounter = 0;
 const int SamplingRate = 50;  //Sampling rate in Hz
 const int zero_buffer = 5;
 const int WindowSize = ceil(WindowTime * SamplingRate);  //Number of Data Point per window
-float accVals[WindowSize] = { 1000 };
-int FirstZeroIndex,stepcounter = 0;
+float accVals[WindowSize] = {1000};
+bool stepchange,calsactive,distactive,goalactive, downstroke,weightreceived,heightreceived,goalreceived,BluetoothRequest,GoalCelebrated = false;
 bool ArrayFull = true;
 LiquidCrystal lcd(7, 6, 5, 4, 3, 2);
+
+//Initialize custom pixel blocks for LCD Progress Bar Display
 byte hollowBlock[8] = {B11111,B10001,B10001,B10001,B10001,B10001,B10001,B11111};
 byte fullBlock[8] = {B11111,B11111,B11111,B11111,B11111,B11111,B11111,B11111};
-
-
-
-//const float cutoff = 5.0; //cutoff frequency of digital low pass
-//float filtval = 0.0;
-//float alpha = ((1.0/SamplingRate )/ ((1.0/(2.0*PI*cutoff)) + 1.0/SamplingRate));
 
 
 void setup() {
@@ -36,14 +34,15 @@ void setup() {
   Wire.write(0x2D);               // Enable measurement
   Wire.write(8);                  // Get sample measurement
   Wire.endTransmission();
-  for (int i = 0; i < WindowSize; i++) {
+
+  for (int i = 0; i < WindowSize; i++) { //Initialize all acceleration values to 1000 (well beyond the range our conditioned sensor would ever reach)
     accVals[i] = 1000;
   }
   lcd.begin(16, 2);
   lcd.createChar(0,fullBlock);
   lcd.createChar(1,hollowBlock);
 
-  //Setup bluetooth
+  //Pause to initialize bluetooth connection
   while (!Serial){
   if (!BLE.begin()) {
     Serial.println("Waiting for ArduinoBLE");
@@ -103,12 +102,12 @@ void FindStepWaveform(float* accVals, const int WindowSize, int zero_buffer) {
 // }
 
 void loop() {
-  BLEDevice central = BLE.central();  // wait for a BLE central
+  BLEDevice central = BLE.central();  // Wait for a BLE central
   bool weightrequestprinted = false;
   bool heightrequestprinted = false;
   bool goalrequestprinted = false;
   if (central) {
-    if(!weightreceived){
+    if(!weightreceived){ //Wait for user to input weight
       if (weightrequestprinted ==false){
         lcd.clear();
         lcd.setCursor(0,0);
@@ -129,7 +128,7 @@ void loop() {
       }
       
   }
-  if(weightreceived && !heightreceived){
+  if(weightreceived && !heightreceived){//Once weight is received, wait for user to input height
     if (heightrequestprinted == false){
         lcd.clear();
         lcd.setCursor(0,0);
@@ -150,7 +149,7 @@ void loop() {
       }
       
   }
-  if(heightreceived && !goalreceived){
+  if(heightreceived && !goalreceived){//Once height is received, wait for user to input goal
     if (goalrequestprinted == false){
         lcd.clear();
         lcd.setCursor(0,0);
@@ -171,10 +170,11 @@ void loop() {
       }
       
   }
-      calsperstep = 0.0000023655*weight*height;
+  //Determine parameter-dependent constants that will be used for further calculations
+      calsperstep = 0.0000023655*weight*height; //calories burned per step
       stridelength = 0.414 * height/100; //stride length in meters
   }
-
+if (goalreceived){ // Once the final parameter is received, begin collecting accelerometer date
   delay(floor(1000 / SamplingRate));
   Wire.beginTransmission(accel);
   Wire.write(0x32);  // Prepare to get readings for sensor (address from data sheet)
@@ -188,19 +188,11 @@ void loop() {
   y = y / 256;
   z = z / 256;
   acc = sqrt((x * x + y * y + z * z));
+}
 
 
-  //filtval =  (alpha * acc) + (1-alpha) * filtval;
-
-  //Serial.println("START");
-  //Serial.println(z);
-  //Serial.println(y);
-  //Serial.println(x);
-  //Serial.println(acc);
-  // Serial.print("Steps: ");
-  // Serial.println(stepcounter);
   ArrayFull = true;
-  for (int i = 0; i < WindowSize; i++) {
+  for (int i = 0; i < WindowSize; i++) { //parse array to determine whether it is full
     if (accVals[i] == 1000) {
       ArrayFull = false;
       FirstZeroIndex = i;
@@ -208,7 +200,7 @@ void loop() {
     }
   }
 
-  if (!ArrayFull) {
+  if (!ArrayFull) { //Populate array depending on if it is full or still has some initial values
     accVals[FirstZeroIndex] = acc;
   } else {  //Check for steps then shift window to the left
     FindStepWaveform(accVals, WindowSize, zero_buffer);
@@ -217,7 +209,7 @@ void loop() {
     }
     accVals[WindowSize - 1] = acc;
   }
-  if (stepchange == true && central) {
+  if (stepchange == true && central) { //Update the 
     lcd.clear();
     lcd.print("Steps: ");
     lcd.print(stepcounter);
